@@ -2,6 +2,32 @@
 
 All notable changes to png2hdr. Format follows [Keep a Changelog](https://keepachangelog.com).
 
+## [0.2.3] - 2026-07-22
+
+### Added
+- `--anti-greyscale` (default `auto`). Verified in served bytes :: LinkedIn re-encodes any
+  JPEG whose channels are equal everywhere as a 1-component greyscale image. The ICC profile
+  stays attached and byte-identical but still declares `space = RGB` while the data is now
+  Gray, so the renderer discards it on the mismatch and the PQ samples read as sRGB. The
+  result is a flat grey logo with perfectly intact metadata, and it is invisible until you
+  inspect what the CDN serves back. The fix injects a trace of chroma into the shadows only
+  (blue floor 12, red floor 4 in PQ code, ~0.05 cd/m^2), which breaks channel equality,
+  survives JPEG at q96 4:4:4, and never touches the mark. `auto` fires only on near-neutral
+  input; `off` disables; an integer sets the level.
+- `inspect` now reports JPEG component count and emits a loud warning on the greyscale
+  signature (1 component carrying an RGB ICC profile, or a greyscale-colour-type PNG with a
+  cICP chunk). That combination is otherwise completely silent.
+
+### Changed
+- Softened the MaxFALL note. The old text implied MaxFALL above ~500 was the cause of
+  failure; it never explained the neutral-asset failures, which were the greyscale bug. There
+  are two independent modes :: the greyscale re-encode (fixed above) and a frame-average
+  overrun that is n=2 and unconfirmed since the fix. The note now says so, and the ~500 line
+  stays a nudge to check the served file rather than a limit.
+- README gains a "greyscale trap" section and corrects the peak and status sections. The
+  generated ICC profile is now stated as never having been through a live upload, since every
+  measured success used a LUT-based third-party profile.
+
 ## [0.2.2] - 2026-07-22
 
 ### Fixed

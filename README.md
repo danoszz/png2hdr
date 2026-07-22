@@ -1,4 +1,4 @@
-![version](https://img.shields.io/badge/version-0.2.2-0000ed)
+![version](https://img.shields.io/badge/version-0.2.3-0000ed)
 ![python](https://img.shields.io/badge/python-%E2%89%A53.9-0000ed)
 ![license](https://img.shields.io/badge/license-MIT-0000ed)
 ![deps](https://img.shields.io/badge/deps-numpy%20%2B%20pillow-0000ed)
@@ -220,6 +220,46 @@ it at the URL the platform hands back and see which of the three fates your file
 
 ---
 
+## The greyscale trap
+
+The ICC hack has a failure mode, and it is the most useful thing in this repo because it
+is completely silent. A monochrome logo (a black-and-white wordmark, a neutral icon) has
+equal channels everywhere, `R == G == B`. Some platforms, LinkedIn among them, re-encode
+any such JPEG as a **1-component greyscale** image to save bytes. The ICC profile stays
+bolted on, byte-for-byte intact, still declaring `space = RGB`. The data underneath is
+now Gray. On that mismatch the rendering engine discards the profile, the PQ samples get
+read as plain sRGB, and you get a flat grey logo with a perfect, useless profile attached.
+
+Two files served back from the same platform, same 9196-byte Rec2020-PQ profile, same
+`cicp` of `9 / 16 / 0 / 1`. The only difference was component count:
+
+| Asset | Served as | Result |
+| --- | --- | --- |
+| chromatic logo | 3 components | renders HDR |
+| neutral logo | 1 component | renders grey |
+
+It is invisible before upload. What you send is 3-component and correct :: the damage is
+done server-side, and the only way to see it is to `--inspect` what the CDN hands back.
+
+**The fix is on by default.** png2hdr breaks channel equality by injecting a trace of
+chroma into the shadows only, where PQ has enormous code range and almost no light. PQ
+code 12 is 0.05 cd/m^2, so against a 1600 cd/m^2 mark it is 1/30000th of the brightness,
+perceptually absent but mathematically present, and it survives JPEG at q96 with 4:4:4.
+The mark itself is never touched.
+
+```bash
+png2hdr logo.png -o logo_hdr.jpg --peak 1600            # auto-detects, injects, says so
+png2hdr logo.png -o logo_hdr.jpg --anti-greyscale off   # opt out
+png2hdr logo.png -o logo_hdr.jpg --anti-greyscale 8     # set the level yourself
+```
+
+`--anti-greyscale auto` (the default) only fires when the encoded image is near-neutral,
+so photographs and coloured marks are left alone. `--inspect` now reports JPEG component
+count and shouts when it finds the 1-component-plus-RGB-profile signature, so you can
+catch the trap on any file, including ones png2hdr never made.
+
+---
+
 ## Choosing a peak
 
 The number that predicts success is **not** peak brightness. It is MaxFALL, the
@@ -233,18 +273,24 @@ near-white field is already over budget before you pick anything.
 | Saturated field, black mark | 94% | 600 | 462 |
 | Saturated field, black mark | 94% | 1000 | 771 |
 
-`--dry-run` prints MaxFALL before you write anything, and warns past ~500.
+`--dry-run` prints MaxFALL before you write anything, and flags it past ~500. That
+threshold speaks to only one of two independent failure modes, and it is the weaker one.
 
-> **On that threshold.** One asset, one platform, two uploads. 600 glowed and 1000 did
-> not. That is n=1, not a validated limit :: the real line sits somewhere between them,
-> may well be higher, and probably moves with ambient light, the brightness slider, and
-> whatever the platform did to your file that day. Treat the warning as a nudge to run
-> `--dry-run`, not as physics.
+> **Frame-average overrun.** A display grants peak output to small windows, not full
+> fields, so a high frame-average can make it tone-map the whole image down. A chromatic
+> logo at MaxFALL 462 rendered HDR; the same logo at 771 rendered flat. That is the best
+> explanation for the pair, but it is n=2 and has not been retested since the greyscale
+> fix, so treat the ~500 line as a nudge to check the served file, not as physics.
 
-The technique flatters one shape above all others: **a small neutral mark on a dark
-field.** Neutral matters because if the profile does get stripped, PQ samples get read
-as sRGB, and a white mark degrades to legible light grey while a saturated field
-degrades to mud.
+> **Greyscale re-encode.** The other mode, and the one that earlier notes wrongly blamed
+> on MaxFALL. It has nothing to do with brightness :: it is the colour-space mismatch in
+> [the greyscale trap](#the-greyscale-trap), and it is fixed by default now.
+
+A small neutral mark on a dark field is still the shape the technique flatters most :: a
+low frame-average keeps you clear of the first mode, and if the profile is stripped
+entirely a neutral mark degrades to legible grey while a saturated field degrades to mud.
+Neutral art benefits fully. The earlier notion that it could not was the greyscale bug in
+disguise, not a limit of the method.
 
 ---
 
@@ -258,13 +304,16 @@ png2hdr out.jpg --inspect
   container      JPEG
   APP2             2,620  ICC_PROFILE
   encoding       progressive
+  components     3
   ICC            2,604 bytes, cicp tag -> [9, 16, 0, 1] :: BT.2020 / PQ (ST 2084) / matrix 0 / full range
 
   VERDICT  HDR signalled :: PQ (ST 2084). Should drive display headroom.
 ```
 
 Point it at the URL a platform serves back to you. That is the only measurement worth
-trusting, and it takes about ten seconds.
+trusting, and it takes about ten seconds. Watch the `components` line especially :: a
+`1` next to an RGB profile is [the greyscale trap](#the-greyscale-trap), and nothing else
+will tell you.
 
 ---
 
@@ -317,16 +366,23 @@ The suite pins the PQ transfer to its ST 2084 anchors (100 cd/m² -> 0.5081, 100
 0.7518), parses the generated profile under `ImageCms` and reads its `9 / 16 / 0 / 1`
 cicp tag, confirms the ICC survives a JPEG save and load, checks the PNG chunk order
 (`IHDR`, `cICP`, `mDCV`, `cLLI`, ..., `IDAT`, `IEND`), exercises the `retag` guard, and
-verifies flat mode leaves linear-light channel ratios untouched. CI runs it on Python
-3.9 through 3.13.
+verifies flat mode leaves linear-light channel ratios untouched. It also covers the
+anti-greyscale path :: neutral input triggers shadow-chroma injection while chromatic
+input does not, the mark stays bit-identical, the injected chroma decodes to under
+0.1 cd/m², and `inspect` flags a 1-component file that still carries an RGB profile. CI
+runs it on Python 3.9 through 3.13.
 
 ---
 
 ## Status
 
-**v0.2.2, early.** Conversion, both containers, the generated ICC profile, and the
-inspector all work and are tested. The platform-survival claims rest on a small number
-of real uploads and should be re-measured rather than believed.
+**v0.2.3, early.** Conversion, both containers, the anti-greyscale fix, and the inspector
+all work and are covered by tests. Two caveats stated plainly :: the platform-survival
+claims rest on a handful of real uploads, and every one of them used a LUT-based profile
+extracted from a third-party file. The generated ~2.6 KB profile parses and carries the
+right `cicp`, but it has never been through a live upload. If it turns out not to survive,
+the ICC section overstates its case. Re-measure with `--inspect` rather than believing
+any of this.
 
 Issues and PRs welcome.
 
