@@ -25,7 +25,7 @@ from PIL import Image
 
 from . import icc as _icc
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 try:                                    # Pillow >= 9.1
     LANCZOS = Image.Resampling.LANCZOS
@@ -193,8 +193,58 @@ def retag_png(blob: bytes, force: bool = False) -> bytes:
 
 # ----------------------------------------------------------------- JPEG writer
 
-def write_jpeg(nits: np.ndarray, profile: bytes, quality: int = 96) -> bytes:
-    code = np.rint(pq_oetf(nits) * 255.0).clip(0, 255).astype(np.uint8)
+def pq_code_8bit(nits: np.ndarray) -> np.ndarray:
+    """PQ-encode absolute luminance to the 8-bit RGB code a JPEG carries."""
+    return np.rint(pq_oetf(nits) * 255.0).clip(0, 255).astype(np.uint8)
+
+
+def is_greyscale_code(code: np.ndarray, frac: float = 0.95) -> bool:
+    """True when at least `frac` of pixels have equal channels (spread <= 1).
+
+    That is the condition under which a pipeline may re-encode the JPEG as a
+    1-component greyscale image, which leaves an RGB ICC profile attached but
+    describing the wrong colour space, so a renderer discards it.
+    """
+    spread = code.max(-1).astype(np.int16) - code.min(-1).astype(np.int16)
+    return float((spread <= 1).mean()) >= frac
+
+
+def inject_shadow_chroma(code: np.ndarray, level: int = 12) -> np.ndarray:
+    """Break channel equality in the shadows so a pipeline cannot collapse the
+    image to greyscale.
+
+    Only pixels at or below the 60th luminance percentile are touched, where PQ
+    has vast code range and almost no light :: code 12 decodes to 0.05 cd/m^2,
+    which against a 1600 cd/m^2 mark is 1/30000th of the brightness. The mark
+    sits above the threshold and is left bit-identical. Returns a new array.
+    """
+    code = code.copy()
+    lum = code.mean(axis=2)
+    dark = lum <= np.percentile(lum, 60)
+    red = max(1, int(round(level / 3)))
+    code[..., 2] = np.where(dark, np.maximum(code[..., 2], level), code[..., 2])  # blue
+    code[..., 0] = np.where(dark, np.maximum(code[..., 0], red), code[..., 0])    # red
+    return code
+
+
+def resolve_anti_greyscale(mode, nits: np.ndarray, default: int = 12) -> int:
+    """Turn the --anti-greyscale mode into an injection level (0 == off).
+
+    `off` never injects. `auto` injects `default` only when the encoded image is
+    near-neutral. An integer forces that level regardless.
+    """
+    if mode == "off":
+        return 0
+    if mode == "auto":
+        return default if is_greyscale_code(pq_code_8bit(nits)) else 0
+    return int(mode)
+
+
+def write_jpeg(nits: np.ndarray, profile: bytes, quality: int = 96,
+               anti_greyscale: int = 0) -> bytes:
+    code = pq_code_8bit(nits)
+    if anti_greyscale > 0:
+        code = inject_shadow_chroma(code, anti_greyscale)
     buf = BytesIO()
     Image.fromarray(code).save(
         buf, format="JPEG", quality=quality, subsampling=0,
@@ -238,7 +288,7 @@ def inspect(target: str) -> int:
         blob = Path(target).read_bytes()
 
     print(f"{target}\n  {len(blob):,} bytes")
-    hdr, cicp, profile = False, None, None
+    hdr, cicp, profile, components, png_ct = False, None, None, None, None
 
     if blob[:8] == b"\x89PNG\r\n\x1a\n":
         print("  container      PNG")
@@ -247,6 +297,7 @@ def inspect(target: str) -> int:
             note = ""
             if tag == b"IHDR":
                 w, h, bd, ct = struct.unpack(">IIBB", body[:10])
+                png_ct = ct
                 note = f"{w}x{h} {bd}-bit colour-type {ct}"
             elif tag == b"cICP":
                 cicp = list(body[:4]); note = _describe(cicp)
@@ -273,8 +324,11 @@ def inspect(target: str) -> int:
                 i += 2; continue
             ln = struct.unpack(">H", blob[i + 2:i + 4])[0]
             payload = blob[i + 4:i + 4 + ln - 2]
-            if m == 0xC2:
-                prog = True
+            if 0xC0 <= m <= 0xCF and m not in (0xC4, 0xC8, 0xCC):   # SOFn frame header
+                if m == 0xC2:
+                    prog = True
+                if len(payload) >= 6:
+                    components = payload[5]        # number of image components
             if 0xE0 <= m <= 0xEF:
                 name = payload[:20].split(b"\0")[0].decode("latin1", "replace")
                 segs.append((f"APP{m - 0xE0}", ln, name))
@@ -286,6 +340,9 @@ def inspect(target: str) -> int:
         for n, ln, name in segs:
             print(f"  {n:14s} {ln:7,}  {name}")
         print(f"  encoding       {'progressive' if prog else 'baseline'}")
+        if components is not None:
+            print(f"  components     {components}"
+                  f"{'  (greyscale)' if components == 1 else ''}")
         for probe, label in ((b"MPF\x00", "MPF gain map"),
                              (b"hdrgm", "Ultra HDR gain map"),
                              (b"urn:iso:std:iso:ts:21496", "ISO 21496-1 gain map")):
@@ -301,8 +358,21 @@ def inspect(target: str) -> int:
         if c and c[1] in (16, 18):
             cicp = c
 
+    # The greyscale re-encode trap :: silent unless you go looking for it.
+    trap_jpg = components == 1 and profile is not None and profile[16:20].rstrip() == b"RGB"
+    trap_png = png_ct in (0, 4) and cicp is not None
+    if trap_jpg:
+        print("  WARNING  1 component but the ICC space is RGB :: a greyscale "
+              "re-encode orphaned the profile. Re-export with --anti-greyscale.")
+    if trap_png:
+        print("  WARNING  greyscale colour-type carrying cICP :: HDR signalled on "
+              "greyscale data, which a cICP-aware viewer will misread.")
+
     print()
-    if cicp and cicp[1] in (16, 18):
+    if trap_jpg or trap_png:
+        print("  VERDICT  greyscale re-encode :: the PQ signal is orphaned by a "
+              "colour-space mismatch and renders as SDR despite the tag.")
+    elif cicp and cicp[1] in (16, 18):
         print(f"  VERDICT  HDR signalled :: {TRANSFER.get(cicp[1])}. "
               "Should drive display headroom.")
     elif hdr:

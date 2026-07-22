@@ -8,8 +8,9 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import (DIFFUSE_WHITE_NITS, LANCZOS, __version__, inspect, resolve_icc,
-               retag_png, stats, to_nits, write_jpeg, write_png)
+from . import (DIFFUSE_WHITE_NITS, LANCZOS, __version__, inspect,
+               resolve_anti_greyscale, resolve_icc, retag_png, stats, to_nits,
+               write_jpeg, write_png)
 
 
 
@@ -18,6 +19,18 @@ def parse_hex(s: str):
     if len(s) != 6:
         raise argparse.ArgumentTypeError("expected #rrggbb")
     return tuple(int(s[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def anti_greyscale_arg(s: str):
+    if s in ("auto", "off"):
+        return s
+    try:
+        v = int(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected 'auto', 'off', or an integer 0-255")
+    if not 0 <= v <= 255:
+        raise argparse.ArgumentTypeError("level must be 0-255")
+    return v
 
 
 def main(argv=None) -> int:
@@ -47,6 +60,12 @@ def main(argv=None) -> int:
     ap.add_argument("--neutral-blue", action="store_true",
                     help="zero the blue channel after the primaries change; "
                          "only for sources whose blue is genuinely 0")
+    ap.add_argument("--anti-greyscale", type=anti_greyscale_arg, default="auto",
+                    metavar="MODE",
+                    help="break channel equality in the shadows so a pipeline "
+                         "cannot re-encode near-neutral art to 1-component "
+                         "greyscale and orphan the ICC profile. auto (default), "
+                         "off, or a PQ code level. jpg only")
     ap.add_argument("--icc", help="ICC profile to embed (default: system, "
                                   "else a generated Rec2020-PQ profile)")
     ap.add_argument("--quality", type=int, default=96, help="JPEG quality")
@@ -88,15 +107,22 @@ def main(argv=None) -> int:
                   f"{s['p50']:.0f} p90 {s['p90']:.0f} p99 {s['p99']:.0f} :: "
                   f"MaxCLL {s['maxcll']:.0f} MaxFALL {s['maxfall']:.0f} cd/m^2")
         if s["maxfall"] > 500:
-            report += "\n  warning: MaxFALL above ~500 is where tone-mapping was " \
-                      "observed to kick in. Lower --peak or shrink the bright area."
+            report += "\n  note: MaxFALL above ~500 may trip frame-average tone " \
+                      "mapping on some displays. That mode is n=2 and unconfirmed " \
+                      "since the greyscale fix :: a nudge to check the served file."
+
+        ag_level = resolve_anti_greyscale(a.anti_greyscale, nits) if fmt == "jpg" else 0
+        if ag_level:
+            report += (f"\n  anti-greyscale :: +{ag_level} shadow chroma so a "
+                       "greyscale re-encode cannot orphan the profile")
+
         if a.dry_run:
             print(report)
             return 0
 
         if fmt == "jpg":
             profile, src = resolve_icc(a.icc)
-            Path(dst).write_bytes(write_jpeg(nits, profile, a.quality))
+            Path(dst).write_bytes(write_jpeg(nits, profile, a.quality, ag_level))
             extra = f"ICC {len(profile)}B ({src})"
         else:
             Path(dst).write_bytes(write_png(nits))
