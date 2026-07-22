@@ -122,8 +122,8 @@ flowchart LR
 
 ## First principles
 
-A walk through the whole idea, assuming you have never met any of these terms. Every
-step maps to one arrow in the diagram above.
+Every term here is defined from scratch, and each step maps to one arrow in the diagram
+above.
 
 **A screen's white is not its brightest.** Show a blank white page and the panel is
 loafing, holding power in reserve. A standard image cannot reach that reserve, because
@@ -216,7 +216,7 @@ read as ordinary sRGB. A neutral bright mark degrades to a legible light grey; a
 saturated field degrades to mud. Keep the bright area small and its frame-average
 brightness (MaxFALL) low, and the display grants the headroom without a fight. That is
 why the trick flatters a logo far more than a photo, and why `--inspect` exists :: point
-it at the URL the platform hands back and see which of the three fates your file met.
+it at the URL the platform hands back and see what actually arrived.
 
 ---
 
