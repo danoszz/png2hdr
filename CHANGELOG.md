@@ -28,6 +28,9 @@ All notable changes to png2hdr. Format follows [Keep a Changelog](https://keepac
   chunk ordering, the retag guard, flat-mode hue preservation, and inspector
   classification of SDR, PQ JPEG, and PQ PNG files.
 - CI workflow running the suite across the supported Python versions (3.9 to 3.13).
+- README explainer :: the origin brief, a "First principles" walk from SDR white through
+  colour spaces, linear light, absolute nits, and the ST 2084 and sRGB maths in LaTeX,
+  ending on the container-survival hack. Written to read from beginner to expert.
 
 ## [0.2.1] - 2026-07-22
 

@@ -10,6 +10,20 @@ the upload.
 
 ---
 
+## The brief
+
+This started as a client question :: how do we make our logo pop on LinkedIn? Not
+larger, not louder. Actually brighter than the white of the page around it, the way a
+good HDR photo glows in a feed while everything beside it sits flat.
+
+It took a couple of passes. The colour maths landed quickly. What ate the time was
+watching a correct file arrive on the platform looking like nothing had happened,
+because the part that carries the glow kept getting stripped in transit. png2hdr is
+where those passes settled :: the recommendation, the exact commands to reproduce it,
+and, further down, why any of it works.
+
+---
+
 ## Why png2hdr
 
 HDR is not a pixel trick. There is no arrangement of samples that goes brighter than
@@ -101,6 +115,106 @@ flowchart LR
 ```
 
 `retag` skips the middle entirely and only writes the label.
+
+---
+
+## First principles
+
+A walk through the whole idea, assuming you have never met any of these terms. Every
+step maps to one arrow in the diagram above.
+
+**A screen's white is not its brightest.** Show a blank white page and the panel is
+loafing, holding power in reserve. A standard image cannot reach that reserve, because
+its brightest possible pixel, `#ffffff`, is *defined* as white. There is no number
+above white. That is what SDR (standard dynamic range) means :: the code and the
+paper-white of the display are pinned together.
+
+**HDR is permission, not paint.** An HDR display can drive small regions far past paper
+white, often ten times past. Nothing in the pixels alone unlocks that. The file has to
+carry a note to the compositor that says "read these values on an absolute brightness
+scale, and give them the headroom they ask for." Make the note convincing and a flat
+logo lifts off the page. That note is the whole game.
+
+**Colour is coordinates, and the axes can move.** A triple `(R, G, B)` means nothing
+until you say *which* red, green, and blue. sRGB, the web default, uses one set of
+primaries; Rec.2020, the wide gamut HDR rides on, uses far more saturated ones. Before
+any of that you undo the display gamma to reach *linear light*, where values are
+proportional to photons and safe to scale. The sRGB decode is piecewise:
+
+```math
+C_\text{lin} =
+\begin{cases}
+C / 12.92, & C \le 0.04045 \\
+\left(\dfrac{C + 0.055}{1.055}\right)^{2.4}, & C > 0.04045
+\end{cases}
+```
+
+Then rotate the coordinates from BT.709 (sRGB's primaries) into BT.2020 with a fixed
+3x3 matrix:
+
+```math
+\begin{bmatrix} R \\ G \\ B \end{bmatrix}_{2020}
+=
+\begin{bmatrix}
+0.6274 & 0.3293 & 0.0433 \\
+0.0691 & 0.9195 & 0.0114 \\
+0.0164 & 0.0880 & 0.8956
+\end{bmatrix}
+\begin{bmatrix} R \\ G \\ B \end{bmatrix}_{709}
+```
+
+**Now attach real brightness.** Linear light is still relative :: `1.0` only means "as
+bright as the source could go." png2hdr scales it onto an absolute axis measured in
+cd/m^2 (nits). In `flat` mode every pixel takes one shared gain, chosen so the
+brightest channel lands exactly on `--peak`:
+
+```math
+Y = w \, g \, C_\text{lin}, \qquad g = \frac{\text{peak}}{w \cdot \max_i C_{\text{lin},\,i}}
+```
+
+`w` is diffuse white, 203 cd/m^2 by ITU-R BT.2408. `knee` mode leaves the midtones alone
+and lifts only the highlights with a smoothstep, which is what photographs want. Either
+way the luminance in the report is the BT.2020 weighted sum
+`Y = 0.2627 R + 0.6780 G + 0.0593 B`.
+
+**PQ is an absolute ruler.** To store those nits png2hdr applies the Perceptual
+Quantizer (SMPTE ST 2084), the transfer function almost every HDR format speaks. Unlike
+gamma it is absolute :: a given code always means a given luminance, from 0 to 10000
+cd/m^2, spaced to match how the eye notices steps.
+
+```math
+V = \left( \frac{c_1 + c_2\,Y_n^{\,m_1}}{1 + c_3\,Y_n^{\,m_1}} \right)^{m_2},
+\qquad Y_n = \frac{Y}{10000}
+```
+
+```math
+m_1 = \tfrac{2610}{16384},\quad
+m_2 = \tfrac{2523}{4096}\cdot 128,\quad
+c_2 = \tfrac{2413}{4096}\cdot 32,\quad
+c_3 = \tfrac{2392}{4096}\cdot 32,\quad
+c_1 = c_3 - c_2 + 1
+```
+
+That is `m1 = 0.15930`, `m2 = 78.844`, `c1 = 0.8359`, `c2 = 18.852`, `c3 = 18.688`, and
+it puts 100 nits at signal `0.508`, 1000 at `0.752`, and 10000 at `1.0`. `--dry-run`
+prints the numbers behind those curves before you write anything.
+
+**The signal is metadata, and metadata is disposable.** The pixels are PQ now, which is
+meaningless until something tags them "BT.2020, PQ, full range." That tag is the four
+code points `9 / 16 / 0 / 1`, and it can ride three ways :: a PNG `cICP` chunk, an ICC
+profile, or a gain map. Here is the hack. Upload pipelines re-encode your image and drop
+any ancillary block they do not recognise. `cICP` is new, so it gets stripped. ICC
+profiles are decades old and load-bearing for colour management, so pipelines carry them
+through untouched. So png2hdr puts 8-bit PQ pixels in a **JPEG** and smuggles the
+`9/16/0/1` signal inside the ICC profile's `cicp` tag. Ugly on paper, correct in
+practice, because it is the version that survives the trip.
+
+**Why a neutral mark on a dark field.** If the tag is stripped anyway, the PQ pixels get
+read as ordinary sRGB. A neutral bright mark degrades to a legible light grey; a
+saturated field degrades to mud. Keep the bright area small and its frame-average
+brightness (MaxFALL) low, and the display grants the headroom without a fight. That is
+why the trick flatters a logo far more than a photo, and why `--inspect` exists :: point
+it at the URL the platform hands back and see which of the three fates your file met.
 
 ---
 
