@@ -3,7 +3,7 @@
 ![license](https://img.shields.io/badge/license-MIT-0000ed)
 ![deps](https://img.shields.io/badge/deps-numpy%20%2B%20pillow-0000ed)
 
-# png2hdr
+# png2hdr "make the logo pop"
 
 Make an image glow on HDR displays :: and pick the container that actually survives
 the upload.
