@@ -42,24 +42,26 @@ survive, and gives you a way to check what actually arrived.
 
 ## Run it
 
+Fastest, with [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io) ::
+
+```bash
+uv tool install git+https://github.com/danoszz/png2hdr
+# or: pipx install git+https://github.com/danoszz/png2hdr
+png2hdr --version
+```
+
+No uv or pipx? A plain virtualenv works with the Python that ships with macOS ::
+
 ```bash
 git clone https://github.com/danoszz/png2hdr && cd png2hdr
 python3 -m venv ~/.venvs/png2hdr
 ~/.venvs/png2hdr/bin/pip install -q --upgrade pip
 ~/.venvs/png2hdr/bin/pip install -q .
-ln -sf ~/.venvs/png2hdr/bin/png2hdr ~/bin/png2hdr   # anywhere on your PATH
+ln -sf ~/.venvs/png2hdr/bin/png2hdr ~/.local/bin/png2hdr   # anywhere on your PATH
 png2hdr --version
 ```
 
-Already have pipx or uv?
-
-```bash
-pipx install git+https://github.com/danoszz/png2hdr
-uv tool install git+https://github.com/danoszz/png2hdr
-```
-
-Python 3.9+, numpy, Pillow. No native build, no libpng, no ImageMagick. Works with
-the Python that ships with macOS.
+Python 3.9+, numpy, Pillow. No native build, no libpng, no ImageMagick.
 
 > On macOS, do not `pip install` against the system interpreter. PEP 668 blocks it, and
 > forcing past it drops numpy and Pillow into the OS Python.
