@@ -59,29 +59,36 @@ survive, and gives you a way to check what actually arrived.
 
 ## Run it
 
-Fastest, with [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io) ::
+Isolated and on your PATH, with [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io) ::
 
 ```bash
-uv tool install git+https://github.com/danoszz/png2hdr
-# or: pipx install git+https://github.com/danoszz/png2hdr
+uv tool install png2hdr
+# or: pipx install png2hdr
 png2hdr --version
 ```
 
-No uv or pipx? A plain virtualenv works with the Python that ships with macOS ::
+Inside a project or an activated venv, plain pip works ::
 
 ```bash
-git clone https://github.com/danoszz/png2hdr && cd png2hdr
+pip install png2hdr
+```
+
+No uv or pipx and you want it global on macOS? A dedicated venv uses the system Python ::
+
+```bash
 python3 -m venv ~/.venvs/png2hdr
 ~/.venvs/png2hdr/bin/pip install -q --upgrade pip
-~/.venvs/png2hdr/bin/pip install -q .
+~/.venvs/png2hdr/bin/pip install -q png2hdr
 ln -sf ~/.venvs/png2hdr/bin/png2hdr ~/.local/bin/png2hdr   # anywhere on your PATH
 png2hdr --version
 ```
 
-Python 3.9+, numpy, Pillow. No native build, no libpng, no ImageMagick.
+Python 3.9+, numpy, Pillow. No native build, no libpng, no ImageMagick. Unreleased tip is
+`uv tool install git+https://github.com/danoszz/png2hdr`.
 
 > On macOS, do not `pip install` against the system interpreter. PEP 668 blocks it, and
-> forcing past it drops numpy and Pillow into the OS Python.
+> forcing past it drops numpy and Pillow into the OS Python. uv, pipx, and the venv above
+> all sidestep it.
 
 ---
 
