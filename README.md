@@ -19,11 +19,11 @@ the upload.
 Both cells hold the same mark. The right one is a real HDR JPEG, so **you need the right
 screen to see the point** :: an HDR-capable display with a viewer that keeps the ICC
 profile (Safari or Chrome on a recent Mac, a modern phone, an HDR monitor) reads the
-white visibly brighter than the page around it. On an SDR screen, or if whatever served
-you this page stripped the profile in transit, the two cells look identical. That
-sameness is not a flaw in the demo :: it is the exact failure png2hdr exists to fight.
-For the honest test, download [after.jpg](docs/after.jpg) and open it in Quick Look or
-Preview.
+white visibly brighter than the page around it. GitHub serves this file with its profile
+intact, so on a capable screen the right cell should already glow here, not only after
+you download it. On an SDR screen the two cells look identical, which is not a flaw in
+the demo :: it is the same signalling problem png2hdr exists to solve. To be sure on any
+machine, download [after.jpg](docs/after.jpg) and open it in Quick Look or Preview.
 
 ---
 
