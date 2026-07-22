@@ -1,0 +1,31 @@
+name: Publish to PyPI
+
+# Publishes on each GitHub release, and on demand via the Actions tab.
+# Uses PyPI Trusted Publishing (OIDC) :: no API tokens are stored anywhere.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/png2hdr
+    permissions:
+      id-token: write        # required for trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
