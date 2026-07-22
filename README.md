@@ -1,3 +1,4 @@
+![pypi](https://img.shields.io/pypi/v/png2hdr?color=0000ed)
 ![version](https://img.shields.io/badge/version-0.2.3-0000ed)
 ![python](https://img.shields.io/badge/python-%E2%89%A53.9-0000ed)
 ![license](https://img.shields.io/badge/license-MIT-0000ed)
