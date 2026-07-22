@@ -17,9 +17,12 @@ import png2hdr
 from png2hdr import cli, icc
 from png2hdr import (
     M_709_TO_2020,
+    inject_shadow_chroma,
     inspect,
     iter_chunks,
+    pq_code_8bit,
     pq_oetf,
+    resolve_anti_greyscale,
     retag_png,
     srgb_to_linear,
     stats,
@@ -251,6 +254,71 @@ def test_inspect_classifies_pq_png(tmp_path, capsys):
     assert rc == 0
     assert "HDR signalled" in out
     assert "[9, 16, 0, 1]" in out
+
+
+# ----------------------------------------------- anti-greyscale (the trap)
+
+def _neutral_logo(size=64):
+    """A neutral mark on black :: every channel equal, at greyscale-trap risk."""
+    a = np.zeros((size, size, 3), np.uint8)
+    a[size // 4:3 * size // 4, size // 4:3 * size // 4] = 255
+    return a
+
+
+def test_anti_greyscale_auto_detects_neutral_vs_chromatic():
+    neutral = to_nits(Image.fromarray(_neutral_logo()), "flat", 1600.0, 203.0, 0.75)[0]
+    chroma = to_nits(Image.fromarray(_sample_rgb()), "flat", 1000.0, 203.0, 0.75)[0]
+    assert resolve_anti_greyscale("auto", neutral) == 12   # near-neutral -> inject
+    assert resolve_anti_greyscale("auto", chroma) == 0     # chromatic -> leave it
+    assert resolve_anti_greyscale("off", neutral) == 0     # explicit off
+    assert resolve_anti_greyscale(20, chroma) == 20        # forced level
+
+
+def test_anti_greyscale_spread_survives_q96_roundtrip():
+    nits = to_nits(Image.fromarray(_neutral_logo()), "flat", 1600.0, 203.0, 0.75)[0]
+    blob = write_jpeg(nits, icc.build(), quality=96, anti_greyscale=12)
+    img = Image.open(io.BytesIO(blob))
+    assert img.mode == "RGB"                               # genuinely 3-component
+    arr = np.asarray(img.convert("RGB")).astype(np.int16)
+    spread = arr.max(-1) - arr.min(-1)
+    assert spread.max() >= 8                               # equality broken, survived JPEG
+
+
+def test_anti_greyscale_leaves_the_mark_bit_identical():
+    nits = to_nits(Image.fromarray(_neutral_logo()), "flat", 1600.0, 203.0, 0.75)[0]
+    plain = pq_code_8bit(nits)
+    injected = inject_shadow_chroma(plain, 12)
+    lum = plain.mean(-1)
+    bright = lum > np.percentile(lum, 60)                  # the mark, above the shadow line
+    assert np.array_equal(plain[bright], injected[bright])
+
+
+def test_injected_chroma_is_imperceptible():
+    black = np.zeros((32, 32, 3), np.uint8)               # every pixel is shadow
+    injected = inject_shadow_chroma(black, 12)
+    lum_nits = png2hdr._luma(_pq_eotf(injected.astype(np.float64) / 255.0))
+    assert lum_nits.max() < 0.1                            # under 0.1 cd/m^2, invisible
+
+
+def test_inspect_flags_greyscale_reencode(tmp_path, capsys):
+    # What LinkedIn serves back :: 1-component greyscale, RGB profile still attached.
+    grey = np.zeros((48, 48), np.uint8)
+    grey[16:32, 16:32] = 190
+    buf = io.BytesIO()
+    Image.fromarray(grey).save(buf, format="JPEG", quality=95, icc_profile=icc.build())
+    rc = inspect(_write(tmp_path / "grey.jpg", buf.getvalue()))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "(greyscale)" in out
+    assert "WARNING" in out
+    assert "greyscale re-encode" in out
+
+
+def test_inspect_reports_component_count(tmp_path, capsys):
+    nits = to_nits(Image.fromarray(_sample_rgb()), "flat", 1000.0, 203.0, 0.75)[0]
+    inspect(_write(tmp_path / "rgb.jpg", write_jpeg(nits, icc.build())))
+    out = capsys.readouterr().out
+    assert any("components" in ln and ln.strip().endswith("3") for ln in out.splitlines())
 
 
 # ------------------------------------------------------------ CLI smoke test
